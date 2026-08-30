@@ -74,7 +74,9 @@ const revInfo = {
 
 let running = true;
 async function main() {
-    if (!fs.existsSync('server.json')) {
+    if (process.env.SERVER_REV) {
+        setRev(process.env.SERVER_REV);
+    } else if (!fs.existsSync('server.json')) {
         await promptConfig();
     }
 
@@ -83,6 +85,8 @@ async function main() {
     if (!fs.existsSync('engine')) {
         cloneRepo(engineRepo, 'engine', config.rev);
     }
+
+    linkSaveData();
 
     if (!fs.existsSync('content')) {
         cloneRepo(contentRepo, 'content', config.rev);
@@ -108,6 +112,12 @@ async function main() {
             stdio: 'inherit',
             cwd: 'engine'
         });
+    }
+
+    if (process.env.SERVER_AUTOSTART) {
+        running = false;
+        startServer();
+        return;
     }
 
     const choice = await select({
@@ -146,10 +156,7 @@ async function main() {
     }, { clearPromptOnDone: true });
 
     if (choice === 'start') {
-        child_process.execSync('npm start', {
-            stdio: 'inherit',
-            cwd: 'engine'
-        });
+        startServer();
     } else if (choice === 'update') {
         updateRepo('engine');
         updateRepo('content');
@@ -181,6 +188,91 @@ async function main() {
     } else if (choice === 'quit') {
         running = false;
     }
+}
+
+function startServer() {
+    child_process.execSync('npm start', {
+        stdio: 'inherit',
+        cwd: 'engine'
+    });
+}
+
+// lets docker compose (or anyone else) pick the version without prompting for it
+function setRev(rev) {
+    if (!revInfo[rev]) {
+        console.log(`Unknown version ${rev}, pick one of: ${Object.keys(revInfo).join(', ')}`);
+        process.exit(1);
+    }
+
+    if (fs.existsSync('server.json')) {
+        config = JSON.parse(fs.readFileSync('server.json', 'utf8'));
+
+        if (config.rev === rev) {
+            return;
+        }
+
+        cleanWorkingFolder(); // changing versions needs fresh checkouts
+    }
+
+    config.rev = rev;
+
+    fs.writeFileSync('server.json', JSON.stringify(config, null, 2));
+}
+
+const saveLinks = [
+    ['engine/data/players', '../../save/players', 'save/players'],
+    ['engine/db.sqlite', '../save/db.sqlite', 'save/db.sqlite']
+];
+
+// keeps accounts and characters in save/, so they outlive a version change wiping the checkouts.
+// anything the engine already wrote into the checkout itself is moved out first - installs from
+// before save/ existed have real files there, and cleanWorkingFolder would take them along
+function linkSaveData() {
+    if (!fs.existsSync('engine')) {
+        return;
+    }
+
+    fs.mkdirSync('save/players', { recursive: true });
+
+    for (const [path, target, saved] of saveLinks) {
+        const stat = fs.lstatSync(path, { throwIfNoEntry: false });
+
+        if (stat && stat.isSymbolicLink()) {
+            continue; // already linked by an earlier run
+        }
+
+        if (stat) {
+            moveIntoSave(path, saved, stat);
+        }
+
+        fs.symlinkSync(target, path);
+    }
+}
+
+// save/ is the copy we keep, so a name that is already there wins and the checkout's
+// version is set aside as .old rather than thrown away
+function moveIntoSave(path, saved, stat) {
+    if (!stat.isDirectory()) {
+        fs.renameSync(path, fs.existsSync(saved) ? `${saved}.old` : saved);
+        return;
+    }
+
+    for (const entry of fs.readdirSync(path)) {
+        const dest = `${saved}/${entry}`;
+        fs.renameSync(`${path}/${entry}`, fs.existsSync(dest) ? `${dest}.old` : dest);
+    }
+
+    fs.rmSync(path, { recursive: true, force: true });
+}
+
+// only removes the checkouts - the save data is moved into save/ first and survives as a link
+function cleanWorkingFolder() {
+    linkSaveData();
+
+    fs.rmSync('engine', { recursive: true, force: true });
+    fs.rmSync('content', { recursive: true, force: true });
+    fs.rmSync('webclient', { recursive: true, force: true });
+    fs.rmSync('javaclient', { recursive: true, force: true });
 }
 
 async function promptConfig() {
@@ -284,10 +376,7 @@ async function promptAdvanced() {
     } else if (choice === 'change-version') {
         await promptConfig();
 
-        fs.rmSync('engine', { recursive: true, force: true });
-        fs.rmSync('content', { recursive: true, force: true });
-        fs.rmSync('webclient', { recursive: true, force: true });
-        fs.rmSync('javaclient', { recursive: true, force: true });
+        cleanWorkingFolder();
     }
 }
 
