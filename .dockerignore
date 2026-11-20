@@ -1,8 +1,5 @@
-.git/
-node_modules/
-
-engine/
-content/
-webclient/
-javaclient/
-server.json
+# the image clones its own sources - the build context only needs these
+*
+!config/
+!docker/
+!patches/
