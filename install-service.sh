@@ -1,4 +1,10 @@
 #!/bin/bash
+# Installs lostcity.service: systemd runs the image with docker compose, and the host keeps only
+#   /etc/lostcity/docker-compose.yml   (copied from next to this script)
+#   /srv/lostcity/save                 (db.sqlite and player saves)
+#
+# Nothing from this repo needs to stay on the host, e.g.:
+#   scp install-service.sh docker-compose.yml root@host:/tmp/ && ssh root@host /tmp/install-service.sh
 
 set -e
 
@@ -17,43 +23,53 @@ if ! docker compose version >/dev/null 2>&1; then
 	exit 1
 fi
 
-dir="$(cd "$(dirname "$0")" && pwd)"
+src="$(cd "$(dirname "$0")" && pwd)"
 docker="$(command -v docker)"
 
-# docker would create these as root, but the container runs as uid 1000
-mkdir -p /srv/lostcity/game
-chown -R 1000:1000 /srv/lostcity
+install -d -m 755 /etc/lostcity
+install -m 644 "$src/docker-compose.yml" /etc/lostcity/docker-compose.yml
+# the host has no build context, so only ever pull
+sed -i '/^    build: \.$/d' /etc/lostcity/docker-compose.yml
+
+# docker would create this as root, but the container runs as uid 1000
+mkdir -p /srv/lostcity/save/players
+# copy (not move) saves from the old launcher layout, the first time only
+old=/srv/lostcity/game/save
+if [ -d "$old" ] && [ ! -e /srv/lostcity/save/db.sqlite ]; then
+	echo "Copying existing saves from $old"
+	cp -a "$old"/. /srv/lostcity/save/
+fi
+chown -R 1000:1000 /srv/lostcity/save
 
 cat > /etc/systemd/system/lostcity.service <<EOF
 [Unit]
 Description=Lost City server
 Requires=docker.service
-After=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
-WorkingDirectory=$dir
-ExecStart=$docker compose up -d
+Type=simple
+WorkingDirectory=/etc/lostcity
+# runs in the foreground so systemd tracks the container and journald gets its output
+ExecStart=$docker compose up --no-log-prefix --abort-on-container-exit
 ExecStop=$docker compose down
-# the first start builds the image and clones the sources, which is not quick
-TimeoutStartSec=0
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=90
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now lostcity.service
+systemctl enable lostcity.service
 
 echo
-echo Installed as lostcity.service - it will now start on boot.
+echo "Installed lostcity.service (enabled, not started)."
 echo
-echo "  systemctl status lostcity      is it running?"
-echo "  systemctl stop lostcity        stop it"
-echo "  docker compose logs -f         watch the server (run from $dir)"
+echo "  systemctl start lostcity              start it"
+echo "  journalctl -u lostcity -f             watch the server"
+echo "  cd /etc/lostcity && docker compose pull && systemctl restart lostcity   update"
 echo
-echo "  /srv/lostcity/game/save/players   drop .sav files in here"
-echo
-echo The first start clones the sources and then waits for you to finish setup at:
-echo "  http://$(hostname -I | awk '{print $1}'):8898/setup"
+echo "  /srv/lostcity/save                    db.sqlite and players/ - back this up"

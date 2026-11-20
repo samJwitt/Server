@@ -1,18 +1,18 @@
 services:
   server:
+    # built by .github/workflows/image.yml - set LOSTCITY_IMAGE to pin a specific sha-<commit> tag.
+    # to build locally instead: docker compose build
+    image: ${LOSTCITY_IMAGE:-ghcr.io/samjwitt/server:latest}
     build: .
-    environment:
-      # which version to run - see revInfo in start.js for the full list.
-      # changing this re-clones the checkouts, save/ in the volume below is left alone.
-      SERVER_REV: '274'
-      # run the server straight away instead of showing the menu, so it can run unattended.
-      # for the menu (update, rebuild, reconfigure): docker compose run --rm -e SERVER_AUTOSTART= server
-      SERVER_AUTOSTART: '1'
+    pull_policy: missing
     ports:
-      - '80:8888' # web client and its game traffic - the engine defaults to 8888 on linux
+      - '8888:8888' # web client and its game traffic
       - '43594:43594' # game, for the java client
-      - '8898:8898' # setup page, and the management page once the world is up
+      - '8898:8898' # management page
     volumes:
-      # the checkouts, everything the server builds from them, and save/
-      - /srv/lostcity/game:/opt/server/game
-    restart: unless-stopped
+      # db.sqlite and players/ - the only state; everything else lives in the image
+      - /srv/lostcity/save:/opt/lostcity/save
+      # optional: override the world config baked in from config/world.json
+      # - /srv/lostcity/world.json:/opt/lostcity/engine/data/config/world.json:ro
+    # the engine saves every player on SIGTERM before exiting
+    stop_grace_period: 60s

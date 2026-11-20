@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sam Witt <noreply@localhost>
+Date: Fri, 20 Nov 2026 07:54:14 -0500
+Subject: [PATCH] Extend idle logout to 10 minutes
+
+---
+ src/client/Client.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/client/Client.ts b/src/client/Client.ts
+index a03be90..199a893 100644
+--- a/src/client/Client.ts
++++ b/src/client/Client.ts
+@@ -2355,8 +2355,8 @@ export class Client extends GameShell {
+ 
+         await this.handleInputKey();
+ 
+-        if (now - this.idleTimer > 90_000) {
+-            // no input in 90s, notify the server
++        if (now - this.idleTimer > 600_000) {
++            // no input in 10m, notify the server
+             this.logoutTimer = 250;
+             this.idleTimer += 10_000; // 10s backoff
+ 
